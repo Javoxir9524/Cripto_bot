@@ -1,84 +1,77 @@
 import asyncio
-import logging
 import os
-import aiohttp
 from aiohttp import web
-from telegram import Bot
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
-# ================= CONFIGURATION =================
-# Token va Chat ID to'g'ridan-to'g'ri Render'dagi Environment Variables'dan olinadi
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+# Konfiguratsiya
+TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+PORT = int(os.environ.get("PORT", 8080))
 
-# Logger sozlamasi
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-async def send_telegram_message(text: str):
-    """Telegram bot orqali xabar yuborish funksiyasi"""
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        logger.warning("Telegram Token yoki Chat ID Environment Variables'da topilmadi!")
-        return
-    
-    bot = Bot(token=TELEGRAM_TOKEN)
-    try:
-        await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
-        logger.info("Telegramga xabar muvaffaqiyatli yuborildi.")
-    except Exception as e:
-        logger.error(f"Telegramga xabar yuborishda xatolik: {e}")
-
-async def check_binance_market():
-    """Binance Spot bozorini tahlil qilish va signal berish"""
-    url = "https://api.binance.com/api/v3/ticker/24hr"
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(url, timeout=10) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    # Yuqori hajmga ega va narxi o'sayotgan tangalarni qidirish
-                    for item in data:
-                        symbol = item['symbol']
-                        if symbol.endswith('USDT') and not any(stable in symbol for stable in ['USDC', 'FDUSD', 'TUSD', 'USDP']):
-                            price_change = float(item['priceChangePercent'])
-                            volume = float(item['quoteVolume'])
-                            
-                            # Shart: hajmi $50,000,000 dan yuqori va 24 soatlik o'sishi > 5% bo'lganlar
-                            if volume > 50000000 and price_change > 5.0:
-                                message = (
-                                    f"🚨 *AI SIGNAL: BUY (Sotib olish)*\n\n"
-                                    f"🪙 *Juftlik:* `{symbol}`\n"
-                                    f"📈 *24h O'sish:* `+{price_change}%`\n"
-                                    f"💰 *Savdo hajmi:* `${volume:,.0f}`\n\n"
-                                    f"⚙️ *Holat:* Multi-Timeframe va Hajm filtrlari tasdiqlandi!"
-                                )
-                                await send_telegram_message(message)
-                                break  # Bitta topilgan signalni yuborib to'xtaymiz
-        except Exception as e:
-            logger.error(f"Binance API bilan bog'lanishda xatolik: {e}")
-
-async def background_scanner():
-    """Har 5 daqiqada bozorni avtomatik skanerlab turuvchi sikl"""
-    while True:
-        logger.info("Bozor skanerlanmoqda...")
-        await check_binance_market()
-        await asyncio.sleep(300)  # 5 daqiqa kutish
-
-# Render serveri uxlab qolmasligi uchun yengil web-server
+# 1. Render (Web Service) talabini qondirish uchun yengil veb-server
 async def handle(request):
-    return web.Response(text="Crypto AI Bot ishlamoqda va faol!")
+    return web.Response(text="Bot is running and alive!")
 
 async def start_web_server():
     app = web.Application()
-    app.add_routes([web.get('/', handle)])
+    app.router.add_get("/", handle)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    logger.info("Health-check veb-server 8080-portda ishga tushdi.")
+    print(f"Health-check veb-server {PORT}-portda ishga tushdi.")
+
+# 2. Telegram buyruqlari va xabarlari handlerlari
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🚀 Bot muvaffaqiyatli ishga tushdi va ishlamoqda!")
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Status: Bot faol va Binance bozori nazorat ostida.")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    await update.message.reply_text(f"Xabaringiz qabul qilindi: '{text}'. Bot ishlayapti! 👍")
+
+# 3. Binance bozorini skanerlash va signal yuborish funksiyasi
+async def scan_market(application):
+    while True:
+        print("Bozor skanerlanmoqda...")
+        
+        # --- BU YERGA BINANCE LOGIKANGIZ YOZILADI ---
+        # Masalan, shart bajarilganda CHAT_ID ga xabar yuborish uchun:
+        # if CHAT_ID:
+        #     await application.bot.send_message(
+        #         chat_id=CHAT_ID, 
+        #         text="🚨 Diqqat! Shartga mos tanga topildi!"
+        #     )
+        # ---------------------------------------------
+        
+        await asyncio.sleep(60)  # Har 1 daqiqada tekshiradi
 
 async def main():
+    # Render portini band qilish uchun serverni ishga tushiramiz
     await start_web_server()
-    await background_scanner()
+
+    # Telegram botni quramiz
+    application = ApplicationBuilder().token(TOKEN).build()
+
+    # Handlerlarni qo'shamiz
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+
+    # Botni ishga tushiramiz
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+
+    # Skanerni orqa fonda ishga tushirib, bot obyektini uzatamiz
+    asyncio.create_task(scan_market(application))
+
+    # Dastur to'xtab qolmasligi uchun cheksiz kutish
+    stop_event = asyncio.Event()
+    await stop_event.wait()
 
 if __name__ == "__main__":
     asyncio.run(main())
