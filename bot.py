@@ -1,12 +1,14 @@
 import asyncio
 import logging
+import os
 import aiohttp
 from aiohttp import web
 from telegram import Bot
 
 # ================= CONFIGURATION =================
-TELEGRAM_TOKEN = "SIZNING_TELEGRAM_BOT_TOKENINGIZNI_SHU_YERGA_YOZING"
-CHAT_ID = "SIZNING_CHAT_ID_RAQAMINGIZNI_SHU_YERGA_YOZING"
+# Token va Chat ID to'g'ridan-to'g'ri Render'dagi Environment Variables'dan olinadi
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 # Logger sozlamasi
 logging.basicConfig(level=logging.INFO)
@@ -14,18 +16,19 @@ logger = logging.getLogger(__name__)
 
 async def send_telegram_message(text: str):
     """Telegram bot orqali xabar yuborish funksiyasi"""
-    if TELEGRAM_TOKEN == "SIZNING_TELEGRAM_BOT_TOKENINGIZNI_SHU_YERGA_YOZING":
-        logger.warning("Telegram Token sozlanmagan!")
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        logger.warning("Telegram Token yoki Chat ID Environment Variables'da topilmadi!")
         return
+    
     bot = Bot(token=TELEGRAM_TOKEN)
     try:
         await bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
-        logger.info("Telegramga xabar yuborildi.")
+        logger.info("Telegramga xabar muvaffaqiyatli yuborildi.")
     except Exception as e:
         logger.error(f"Telegramga xabar yuborishda xatolik: {e}")
 
 async def check_binance_market():
-    """Binance Spot bozorini qisqacha tahlil qilish va signal berish"""
+    """Binance Spot bozorini tahlil qilish va signal berish"""
     url = "https://api.binance.com/api/v3/ticker/24hr"
     async with aiohttp.ClientSession() as session:
         try:
@@ -35,21 +38,21 @@ async def check_binance_market():
                     # Yuqori hajmga ega va narxi o'sayotgan tangalarni qidirish
                     for item in data:
                         symbol = item['symbol']
-                        if symbol.endswith('USDT') and not any(stable in symbol for stable in ['USDC', 'FDUSD', 'TUSD']):
+                        if symbol.endswith('USDT') and not any(stable in symbol for stable in ['USDC', 'FDUSD', 'TUSD', 'USDP']):
                             price_change = float(item['priceChangePercent'])
                             volume = float(item['quoteVolume'])
                             
-                            # Misol uchun shart: hajmi $50,000,000 dan yuqori va 24 soatlik o'sishi > 6% bo'lganlar
-                            if volume > 50000000 and price_change > 6.0:
+                            # Shart: hajmi $50,000,000 dan yuqori va 24 soatlik o'sishi > 5% bo'lganlar
+                            if volume > 50000000 and price_change > 5.0:
                                 message = (
-                                    f"🚨 **AI SIGNAL: BUY (Sotib olish)**\n\n"
-                                    f"🪙 **Juftlik:** `{symbol}`\n"
-                                    f"📈 **24h O'sish:** `+{price_change}%`\n"
-                                    f"💰 **Savdo hajmi:** `${volume:,.0f}`\n\n"
+                                    f"🚨 *AI SIGNAL: BUY (Sotib olish)*\n\n"
+                                    f"🪙 *Juftlik:* `{symbol}`\n"
+                                    f"📈 *24h O'sish:* `+{price_change}%`\n"
+                                    f"💰 *Savdo hajmi:* `${volume:,.0f}`\n\n"
                                     f"⚙️ *Holat:* Multi-Timeframe va Hajm filtrlari tasdiqlandi!"
                                 )
                                 await send_telegram_message(message)
-                                break  # Test uchun bitta topilgan signalni yuborib to'xtaymiz
+                                break  # Bitta topilgan signalni yuborib to'xtaymiz
         except Exception as e:
             logger.error(f"Binance API bilan bog'lanishda xatolik: {e}")
 
